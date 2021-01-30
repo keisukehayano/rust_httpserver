@@ -1,52 +1,48 @@
-// HttpServerは自動的に多数のHTTPワーカーを開始します。
-// デフォルトでは、この数はシステム内の論理CPUの数と同じです。
-// この数は、HttpServer :: worker（）メソッドで上書きできます。
+// sslサーバーには、rustlsとopensslの2つの機能があります。 
+// rustls機能はrustls統合用であり、opensslはopenssl用です。
 
-use actix_web::{ web, App, HttpResponse, HttpServer, Responder };
-use std::time::Duration;
-use tokio::time::delay_for;
+// SSLサーバを作成する場合は、以下をCargo.tomlファイルに追記
+// [dependencies]
+// actix-web = { version = "3", features = ["openssl"] }
+// openssl = { version = "0.10" }
 
+use actix_web::{ get, App, HttpRequest, HttpServer, Responder };
+use openssl::ssl::{ SslAcceptor, SslFiletype, SslMethod };
+
+
+#[get("/")]
+async fn index(_req: HttpRequest) -> impl Responder {
+    "Welcom!!"
+}
 
 
 #[actix_web::main]
-async fn main() {
-    HttpServer::new(|| {
-        App::new().route("/", web::get().to(|| HttpResponse::Ok()))
-    })
-    .workers(4);
+async fn main() -> std::io::Result<()> {
+    // load ssl keys
+    // テスト用の自己署名一時証明書を作成するには：
+    // openssl req -x509 -newkey rsa:4096 -nodes -keyout key.pem -out cert.pem -days 365 -subj '/CN=localhost'`
+    let mut builder =
+        SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
+    builder
+        .set_private_key_file("key.pem", SslFiletype::PEM)
+        .unwrap();
+    builder.set_certificate_chain_file("cert.pem").unwrap();
+
+    HttpServer::new(|| App::new().service(index))
+        .bind_openssl("127.0.0.1:8080", builder)?
+        .run()
+        .await
 }
 
-// ワーカーが作成されると、ワーカーはそれぞれ個別のアプリケーションインスタンスを受け取り、リクエストを処理します。
-// アプリケーションの状態はスレッド間で共有されず、ハンドラーは同時実行の懸念なしに状態のコピーを自由に操作できます。
+// 注：HTTP /2.0プロトコルにはtlsalpnが必要です。
+// 現時点では、opensslのみがalpnをサポートしています。
+// 完全な例については、examples / opensslを確認してください。
 
-// アプリケーションの状態は送信または同期である必要はありませんが、
-// アプリケーションファクトリは送信+同期である必要があります。
+// key.pemおよびcert.pemを作成するには、コマンドを使用します。あなた自身の主題を記入してください
 
-// ワーカースレッド間で状態を共有するには、Arcを使用します。
-// 共有と同期が導入されたら、特別な注意を払う必要があります。
-// 多くの場合、変更のために共有状態をロックした結果として、パフォーマンスコストが誤って導入されます。
+// 以下をターミナルで実行
+// $ openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem \
+//   -days 365 -sha256 -subj "/C=CN/ST=Fujian/L=Xiamen/O=TVlinux/OU=Org/CN=muro.lxd"
 
-// 場合によっては、ミューテックスの代わりに読み取り/書き込みロックを使用して非排他的ロックを実現するなど、
-// より効率的なロック戦略を使用してこれらのコストを軽減できますが、
-// 最もパフォーマンスの高い実装は、ロックがまったく発生しない実装であることがよくあります。
-
-// 各ワーカースレッドはその要求を順番に処理するため、現在のスレッドをブロックするハンドラーにより、現在のワーカーは新しい要求の処理を停止します。
-
-fn my_bad_handler() -> impl Responder {
-    std::thread::sleep(Duration::from_secs(4));         // <-- 悪い習慣！現在のワーカースレッドがハングします！
-    "Responce"
-}
-
-
-// このため、CPUにバインドされていない長い操作（I / O、データベース操作など）は、先物または非同期関数として表現する必要があります。
-// 非同期ハンドラーはワーカースレッドによって同時に実行されるため、実行をブロックしません。
-
-async fn my_nice_handler() -> impl Responder {
-    delay_for(Duration::from_secs(5)).await;            // <-- OK。ワーカースレッドはここで他のリクエストを処理します
-    "Responce"
-}
-
-// 同じ制限がエクストラクタにも適用されます。
-// ハンドラー関数がFromRequestを実装する引数を受け取り、その実装が現在のスレッドをブロックすると、
-// ハンドラーの実行時にワーカースレッドがブロックします。このため、エクストラクタを実装する場合は特別な注意を払う必要があります。
-// また、必要に応じて非同期で実装する必要があります。
+// パスワードを削除するには、nopass.pemをkey.pemにコピーします
+// $ openssl rsa -in key.pem -out nopass.pem
