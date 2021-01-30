@@ -1,36 +1,52 @@
-// 次の例は、HTTPサーバーを別のスレッドで起動する方法を示しています。
+// HttpServerは自動的に多数のHTTPワーカーを開始します。
+// デフォルトでは、この数はシステム内の論理CPUの数と同じです。
+// この数は、HttpServer :: worker（）メソッドで上書きできます。
 
-use actix_web::{rt::System, web, App, HttpResponse, HttpServer};
-use std::sync::mpsc;
-use std::thread;
+use actix_web::{ web, App, HttpResponse, HttpServer, Responder };
+use std::time::Duration;
+use tokio::time::delay_for;
+
+
 
 #[actix_web::main]
 async fn main() {
-    let (tx, rx) = mpsc::channel();
-
-    thread::spawn(move || {
-        let sys = System::new("http-server");
-
-        let srv = HttpServer::new(|| {
-            App::new().route("/", web::get().to(|| HttpResponse::Ok()))
-        })
-        .bind("127.0.0.1:8080")?
-        .shutdown_timeout(60) // <- Set shutdown timeout to 60 seconds
-        .run();
-
-        let _ = tx.send(srv);
-        sys.run()
-    });
-
-    let srv = rx.recv().unwrap();
-
-    // 新しい接続の受け入れを一時停止します
-    srv.pause().await;
-
-    // 新しい接続の受け入れを再開します
-    srv.resume().await;
-
-    // サーバーを停止します
-    srv.stop(true).await;
-
+    HttpServer::new(|| {
+        App::new().route("/", web::get().to(|| HttpResponse::Ok()))
+    })
+    .workers(4);
 }
+
+// ワーカーが作成されると、ワーカーはそれぞれ個別のアプリケーションインスタンスを受け取り、リクエストを処理します。
+// アプリケーションの状態はスレッド間で共有されず、ハンドラーは同時実行の懸念なしに状態のコピーを自由に操作できます。
+
+// アプリケーションの状態は送信または同期である必要はありませんが、
+// アプリケーションファクトリは送信+同期である必要があります。
+
+// ワーカースレッド間で状態を共有するには、Arcを使用します。
+// 共有と同期が導入されたら、特別な注意を払う必要があります。
+// 多くの場合、変更のために共有状態をロックした結果として、パフォーマンスコストが誤って導入されます。
+
+// 場合によっては、ミューテックスの代わりに読み取り/書き込みロックを使用して非排他的ロックを実現するなど、
+// より効率的なロック戦略を使用してこれらのコストを軽減できますが、
+// 最もパフォーマンスの高い実装は、ロックがまったく発生しない実装であることがよくあります。
+
+// 各ワーカースレッドはその要求を順番に処理するため、現在のスレッドをブロックするハンドラーにより、現在のワーカーは新しい要求の処理を停止します。
+
+fn my_bad_handler() -> impl Responder {
+    std::thread::sleep(Duration::from_secs(4));         // <-- 悪い習慣！現在のワーカースレッドがハングします！
+    "Responce"
+}
+
+
+// このため、CPUにバインドされていない長い操作（I / O、データベース操作など）は、先物または非同期関数として表現する必要があります。
+// 非同期ハンドラーはワーカースレッドによって同時に実行されるため、実行をブロックしません。
+
+async fn my_nice_handler() -> impl Responder {
+    delay_for(Duration::from_secs(5)).await;            // <-- OK。ワーカースレッドはここで他のリクエストを処理します
+    "Responce"
+}
+
+// 同じ制限がエクストラクタにも適用されます。
+// ハンドラー関数がFromRequestを実装する引数を受け取り、その実装が現在のスレッドをブロックすると、
+// ハンドラーの実行時にワーカースレッドがブロックします。このため、エクストラクタを実装する場合は特別な注意を払う必要があります。
+// また、必要に応じて非同期で実装する必要があります。
