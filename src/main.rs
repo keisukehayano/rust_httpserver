@@ -1,48 +1,45 @@
-// sslサーバーには、rustlsとopensslの2つの機能があります。 
-// rustls機能はrustls統合用であり、opensslはopenssl用です。
+// Actixは、キープアライブ接続で要求を待機できます。
 
-// SSLサーバを作成する場合は、以下をCargo.tomlファイルに追記
-// [dependencies]
-// actix-web = { version = "3", features = ["openssl"] }
-// openssl = { version = "0.10" }
+// 存続接続の動作は、サーバー設定によって定義されます。
 
-use actix_web::{ get, App, HttpRequest, HttpServer, Responder };
-use openssl::ssl::{ SslAcceptor, SslFiletype, SslMethod };
+// 75、Some（75）、KeepAlive :: Timeout（75）-75秒のキープアライブタイマーを有効にします。
+// NoneまたはKeepAlive :: Disabled-キープアライブを無効にします。
+// KeepAlive :: Tcp（75）-SO_KEEPALIVEソケットオプションを使用します。
 
-
-#[get("/")]
-async fn index(_req: HttpRequest) -> impl Responder {
-    "Welcom!!"
-}
-
+use actix_web::{ http, web, App, HttpResponse, HttpServer, HttpRequest };
 
 #[actix_web::main]
-async fn main() -> std::io::Result<()> {
-    // load ssl keys
-    // テスト用の自己署名一時証明書を作成するには：
-    // openssl req -x509 -newkey rsa:4096 -nodes -keyout key.pem -out cert.pem -days 365 -subj '/CN=localhost'`
-    let mut builder =
-        SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
-    builder
-        .set_private_key_file("key.pem", SslFiletype::PEM)
-        .unwrap();
-    builder.set_certificate_chain_file("cert.pem").unwrap();
+async fn main() ->std::io::Result<()> {
+    let one = HttpServer::new(|| {
+        App::new().route("/", web::get().to(|| HttpResponse::Ok()))
+    })
+    .keep_alive(75);            // <- Set keep-alive to 75 seconds
 
-    HttpServer::new(|| App::new().service(index))
-        .bind_openssl("127.0.0.1:8080", builder)?
-        .run()
-        .await
+    // let _two = HttpServer::new(|| {
+    //     App::new().route("/", web::get().to(|| HttpResponse::Ok()))
+    // })
+    // .keep_alive(); // <- Use `SO_KEEPALIVE` socket option.
+
+    let three = HttpServer::new(|| {
+        App::new().route("/", web::get().to(|| HttpResponse::Ok()))
+    })
+    .keep_alive(None);
+    
+
+  one.bind("127.0.0.1:8080")?.run().await
 }
 
-// 注：HTTP /2.0プロトコルにはtlsalpnが必要です。
-// 現時点では、opensslのみがalpnをサポートしています。
-// 完全な例については、examples / opensslを確認してください。
+// 上記の最初のオプションが選択されている場合、キープアライブ状態は応答の接続タイプに基づいて計算されます。
+// デフォルトでは、HttpResponse :: connection_typeは定義されていません。
+// その場合、キープアライブはリクエストのHTTPバージョンによって定義されます。
 
-// key.pemおよびcert.pemを作成するには、コマンドを使用します。あなた自身の主題を記入してください
+// keep alive is off for HTTP/1.0 and is on for HTTP/1.1 and HTTP/2.0.
 
-// 以下をターミナルで実行
-// $ openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem \
-//   -days 365 -sha256 -subj "/C=CN/ST=Fujian/L=Xiamen/O=TVlinux/OU=Org/CN=muro.lxd"
+// 接続タイプは、HttpResponseBuilder :: connection_type（）メソッドを使用して変更できます。
 
-// パスワードを削除するには、nopass.pemをkey.pemにコピーします
-// $ openssl rsa -in key.pem -out nopass.pem
+//async fn index(req: HttpRequest) -> HttpResponse {
+//    HttpResponse::Ok()
+//        .connection_type(http::ConnectionType::Close) // <- Close connection
+//        .force_close() // <- Alternative method
+//        .finish()
+//}
