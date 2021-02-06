@@ -575,6 +575,12 @@ checksum = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
 
 [[package]]
 name = "futures"
+version = "0.1.30"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c7e4c2612746b0df8fed4ce0c69156021b704c9aefa360311c04e6e9e002eed"
+
+[[package]]
+name = "futures"
 version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da9052a1a50244d8d5aa9bf55cbc2fb6f357c86cc52e46c62ed390a7180cf150"
@@ -763,6 +769,9 @@ name = "http_server"
 version = "0.1.0"
 dependencies = [
  "actix-web",
+ "futures 0.1.30",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 
@@ -1618,7 +1627,7 @@ dependencies = [
  "async-trait",
  "backtrace",
  "enum-as-inner",
- "futures",
+ "futures 0.3.12",
  "idna",
  "lazy_static",
  "log",
@@ -1637,7 +1646,7 @@ checksum = "6759e8efc40465547b0dfce9500d733c65f969a4cbbfbe3ccf68daaa46ef179e"
 dependencies = [
  "backtrace",
  "cfg-if 0.1.10",
- "futures",
+ "futures 0.3.12",
  "ipconfig",
  "lazy_static",
  "log",
